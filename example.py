@@ -23,7 +23,7 @@ TARGET_REPLACE_ITER = 100   # target update frequency
 MEMORY_CAPACITY = 2000
 env = gym.make('CartPole-v0')
 env = env.unwrapped
-N_ACTIONS = env.action_space.n
+N_ACTIONS = env.action_space.n # 2 actions: 0:left or 1:right
 N_STATES = env.observation_space.shape[0]
 ENV_A_SHAPE = 0 if isinstance(env.action_space.sample(), int) else env.action_space.sample().shape     # to confirm the shape
 
@@ -54,11 +54,11 @@ class DQN(object):
         self.loss_func = nn.MSELoss()
 
     def choose_action(self, x):
-        x = Variable(torch.unsqueeze(torch.FloatTensor(x), 0))
+        x = Variable(torch.unsqueeze(torch.FloatTensor(x), 0)) # Let the input be rearranged as 1xN
         # input only one sample
         if np.random.uniform() < EPSILON:   # greedy
-            actions_value = self.eval_net.forward(x)
-            action = torch.max(actions_value, 1)[1].data.numpy()
+            actions_value = self.eval_net.forward(x) # get a value for each of action
+            action = torch.max(actions_value, 1)[1].data.numpy() # return the nx1 of argmax indexes (max for each raw)
             action = action[0, 0] if ENV_A_SHAPE == 0 else action.reshape(ENV_A_SHAPE)  # return the argmax index
         else:   # random
             action = np.random.randint(0, N_ACTIONS)
@@ -66,7 +66,7 @@ class DQN(object):
         return action
 
     def store_transition(self, s, a, r, s_):
-        transition = np.hstack((s, [a, r], s_))
+        transition = np.hstack((s, [a, r], s_))   # Stack arrays in sequence horizontally (column wise)
         # replace the old memory with new memory
         index = self.memory_counter % MEMORY_CAPACITY
         self.memory[index, :] = transition
@@ -75,22 +75,24 @@ class DQN(object):
     def learn(self):
         # target parameter update
         if self.learn_step_counter % TARGET_REPLACE_ITER == 0:
-            self.target_net.load_state_dict(self.eval_net.state_dict())
+            self.target_net.load_state_dict(self.eval_net.state_dict())  # update the target_net with eval_net every TARGET_REPLACE_ITER
         self.learn_step_counter += 1
 
         # sample batch transitions
-        sample_index = np.random.choice(MEMORY_CAPACITY, BATCH_SIZE)
+        
+        # Generate a uniform random sample from np.arange(MEMORY_CAPACITY) of size BATCH_SIZE.
+        sample_index = np.random.choice(MEMORY_CAPACITY, BATCH_SIZE) 
         b_memory = self.memory[sample_index, :]
-        b_s = Variable(torch.FloatTensor(b_memory[:, :N_STATES]))
-        b_a = Variable(torch.LongTensor(b_memory[:, N_STATES:N_STATES+1].astype(int)))
-        b_r = Variable(torch.FloatTensor(b_memory[:, N_STATES+1:N_STATES+2]))
-        b_s_ = Variable(torch.FloatTensor(b_memory[:, -N_STATES:]))
+        b_s = Variable(torch.FloatTensor(b_memory[:, :N_STATES])) # state, shape: batch_size x 1
+        b_a = Variable(torch.LongTensor(b_memory[:, N_STATES:N_STATES+1].astype(int))) # action, shape: batch_size x 1
+        b_r = Variable(torch.FloatTensor(b_memory[:, N_STATES+1:N_STATES+2])) # reward, shape: batch_size x 1
+        b_s_ = Variable(torch.FloatTensor(b_memory[:, -N_STATES:])) # state + 1, shape: batch_size x 1
 
         # q_eval w.r.t the action in experience
-        q_eval = self.eval_net(b_s).gather(1, b_a)  # shape (batch, 1)
-        q_next = self.target_net(b_s_).detach()     # detach from graph, don't backpropagate
-        q_target = b_r + GAMMA * q_next.max(1)[0].view(BATCH_SIZE, 1)   # shape (batch, 1)
-        loss = self.loss_func(q_eval, q_target)
+        q_eval = self.eval_net(b_s).gather(1, b_a)  # shape (batch, 1), collect the porbability value of the the actions from eval_net
+        q_next = self.target_net(b_s_).detach()     # detach from graph, don't backpropagate, compute q_next with target_net
+        q_target = b_r + GAMMA * q_next.max(1)[0].view(BATCH_SIZE, 1)   # shape (batch, 1), the theoratical value of q_eval
+        loss = self.loss_func(q_eval, q_target) # expect "q_eval = q_target"
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -109,21 +111,21 @@ for i_episode in range(400):
         # take action
         s_, r, done, info = env.step(a)
 
-        # modify the reward
+        # modify the reward (the longer the distance to the threshold, the higher the reward)
         x, x_dot, theta, theta_dot = s_
-        r1 = (env.x_threshold - abs(x)) / env.x_threshold - 0.8
+        r1 = (env.x_threshold - abs(x)) / env.x_threshold - 0.8  
         r2 = (env.theta_threshold_radians - abs(theta)) / env.theta_threshold_radians - 0.5
         r = r1 + r2
 
         dqn.store_transition(s, a, r, s_)
 
-        ep_r += r
+        ep_r += r  # the accumulated reward
         if dqn.memory_counter > MEMORY_CAPACITY:
             dqn.learn()
             if done:
                 print('Ep: ', i_episode,
                       '| Ep_r: ', round(ep_r, 2))
 
-        if done:
+        if done: # game over
             break
-        s = s_
+        s = s_  # update state
